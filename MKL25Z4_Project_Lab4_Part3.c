@@ -25,16 +25,16 @@ int count = 0;
 int main(void) {
     SIM->SCGC5 |= SIM_SCGC5_PORTA_MASK | SIM_SCGC5_PORTC_MASK | SIM_SCGC5_PORTD_MASK;
     SIM->SCGC6 |= SIM_SCGC6_TPM0_MASK;
-    SIM->SOPT2 |= SIM_SOPT2_TPMSRC(1); // Clock para TPM0
+    SIM->SOPT2 |= SIM_SOPT2_TPMSRC(1); // clk TPM0
 
-    // Configuración de TPM0 (timer)
+    //timer
     TPM0->SC = 0;
     TPM0->MOD = 0xFFFF;
     TPM0->SC |= TPM_SC_PS(1); // Prescaler /4
     TPM0->SC |= TPM_SC_TOF_MASK; // Clear flag
     TPM0->SC |= TPM_SC_CMOD(1);  // LPTPM counter increments on every TPM counter clock
 
-    // Configuración de interrupción en PTA1
+    //interrupt
     PORTA->PCR[1] = PORT_PCR_MUX(1) | PORT_PCR_PE_MASK | PORT_PCR_PS_MASK | PORT_PCR_IRQC(0xA);
     PTA->PDDR &= ~(1 << 1);
     NVIC->ISER[0] |= (1 << 30);
