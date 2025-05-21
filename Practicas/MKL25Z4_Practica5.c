@@ -5,14 +5,12 @@
 #define RW 0x10
 #define EN 0x20
 
-#define MENU_RESET_TIME 10000
-#define FAN_NORMAL_DURATION 1000  // 10 segundos
-#define FAN_ALARM_DURATION 10000  // 2 minutos=120000
-//#define TEMP_THRESHOLD 1
-#define FAN_INTERVAL 100
+#define MENU_RESET_TIME 120000
+#define FAN_NORMAL_DURATION 10000  // 10 segundos
+#define FAN_ALARM_DURATION 60000   // 1 minuto
+
 
 volatile uint32_t lastKeyPressTime = 0;
-volatile uint32_t lastFanActivation = 0;
 volatile float desiredTemperature = 0.0;
 volatile uint8_t inputPosition = 0;
 volatile uint8_t temperatureInput[2] = {0};
@@ -20,6 +18,9 @@ volatile uint8_t systemState = 0;  // 0=normal, 1=alarm
 volatile uint8_t idleMode = 0;
 volatile uint8_t fanActive = 0;
 volatile uint32_t fanStartTime = 0;
+volatile uint32_t millis = 0;
+volatile uint8_t idleMessageShown = 0;
+
 
 void delayMs(int n);
 void delayUs(int n);
@@ -28,20 +29,19 @@ char keypad_getkey(void);
 void LCD_command(unsigned char command);
 void LCD_data(unsigned char data);
 void LCD_init(void);
+void LCD_print(char *str);
 void send_nibble(unsigned char nibble);
 char convert_key(unsigned char key);
 void LED_init(void);
 void show_main_menu();
-void LCD_print(char *str);
 void process_temperature_input(char key);
 void update_temperature_display();
-void clear_line(uint8_t line);
 void ADC_init(void);
 void update_actual_temperature_display();
-void check_temperature_comparison();
 void start_fan(uint32_t duration);
 void stop_fan(void);
 void check_fan_timer(void);
+void SysTick_Handler(void);
 uint16_t read_potentiometer(void);
 
 int main(void)
@@ -54,6 +54,10 @@ int main(void)
     TPM0->SC |= 0x80;
     TPM0->CNT = 0;
     TPM0->SC |= 0x08;
+    SysTick->LOAD = 20970 - 1; // 48MHz / 1000 = 48000, pero como F_BUS=21 MHz -> 21000 ciclos ≈ 1ms
+    SysTick->VAL = 0;
+    SysTick->CTRL = 0x07; // Enable SysTick with interrupt
+
 
     keypad_init();
     LCD_init();
@@ -67,98 +71,89 @@ int main(void)
         char keyChar = convert_key(key);
 
         if (key) {
-			lastKeyPressTime = TPM0->CNT;
-			if (keyChar == '*') {
-				// Reset del sistema
-				temperatureInput[0] = 0;
-				temperatureInput[1] = 0;
-				inputPosition = 0;
-				desiredTemperature = 0.0;
-				systemState = 0;
-				idleMode = 0;
-				stop_fan();
-				show_main_menu();
-			}
-			else if (keyChar >= '0' && keyChar <= '9') {
-				process_temperature_input(keyChar);
-			}
-			else if (keyChar == 'A') {
-				idleMode = 1;
-				stop_fan();
-				LCD_command(0xC0);
-				LCD_print("IDLE MODE ON ");
-			}
-			else if (keyChar == 'B') {
-				idleMode = 0;
-				LCD_command(0xC0);
-				LCD_print("IDLE MODE OFF");
-				lastFanActivation = TPM0->CNT;
-			}
-			else if (keyChar == '#') {
-				desiredTemperature = temperatureInput[0] * 10 + temperatureInput[1];
-				if(desiredTemperature <= 30 && desiredTemperature >= 0) {
+            lastKeyPressTime = TPM0->CNT;
+
+            if (idleMode) {
+				if (keyChar == 'B') {
 					LCD_command(1);
 					LCD_command(0x80);
-					LCD_print("Set Temp:");
-					LCD_data(temperatureInput[0] + '0');
-					LCD_data(temperatureInput[1] + '0');
-					LCD_print(" C");
+					LCD_print("IDLE MODE OFF");
+					idleMode = 0;
+					idleMessageShown = 0;
+					delayMs(500);
+					stop_fan();  // Por si acaso
+					show_main_menu();  // Mostrar menú principal
+				}
+				continue;  // Mientras esté en IDLE, ignoramos cualquier otra tecla
+			}
 
-					while(1) {
-						if(!idleMode) {
-							update_actual_temperature_display();
-							check_temperature_comparison();
-							check_fan_timer();
-						}
-
-						unsigned char newKey = keypad_getkey();
-						if(newKey) {
-							char newKeyChar = convert_key(newKey);
-							if(newKeyChar == '*') {
-								show_main_menu();
-								break;
-							}
-							else if(newKeyChar == 'A') {
-								idleMode = 1;
-								stop_fan();
-								LCD_command(0xC0);
-								LCD_print("IDLE MODE ON ");
-							}
-							else if(newKeyChar == 'B') {
-								idleMode = 0;
-								LCD_command(0xC0);
-								LCD_print("IDLE MODE OFF");
-							    delayMs(1000);
-								lastFanActivation = TPM0->CNT;
-							}
-					   }
-				   }
+            if (keyChar == '*') {
+                temperatureInput[0] = 0;
+                temperatureInput[1] = 0;
+                inputPosition = 0;
+                desiredTemperature = 0.0;
+                systemState = 0;
+                idleMode = 0;
+                stop_fan();
+                show_main_menu();
+            }
+            else if (keyChar >= '0' && keyChar <= '9') {
+                process_temperature_input(keyChar);
+            }
+            else if (keyChar == 'A') {
+                idleMode = 1;
+                LCD_command(1);
+                idleMessageShown = 0;
+                stop_fan();
+            }
+            else if (keyChar == '#') {
+                desiredTemperature = temperatureInput[0] * 10 + temperatureInput[1];
+                if (desiredTemperature >= 0 && desiredTemperature <= 50) {
+                    LCD_command(1);
+                    LCD_command(0x80);
+                    LCD_print("Set Temp: ");
+                    LCD_data(temperatureInput[0] + '0');
+                    LCD_data(temperatureInput[1] + '0');
+                    LCD_print(" C     ");
                 }
             }
         }
-        if (!idleMode) {
-			if (systemState == 1) { // Modo alarma
-				if (!fanActive) {
-					start_fan(FAN_ALARM_DURATION);
-				}
-			}
-			else { // Modo normal
-				if (!fanActive && (TPM0->CNT - lastFanActivation) >= FAN_INTERVAL) {
-					start_fan(FAN_NORMAL_DURATION);
-					lastFanActivation = TPM0->CNT;
-				}
-			}
+
+        if (idleMode && !idleMessageShown) {
+			LCD_command(1);
+			LCD_command(0x80);
+			LCD_print("IDLE MODE ON");
+			update_actual_temperature_display();
+			idleMessageShown = 1;
+			continue;
 		}
 
-        if (fanActive && (TPM0->CNT - fanStartTime) >= (systemState == 1 ? FAN_ALARM_DURATION : FAN_NORMAL_DURATION)) {
-			stop_fan();
-			if (systemState == 1) systemState = 0; // Salir del modo alarma
-		}
-        if ((TPM0->CNT - lastKeyPressTime) > MENU_RESET_TIME) {
-            show_main_menu();
-            lastKeyPressTime = TPM0->CNT;
+        // Actualización de temperatura y ventilador
+        if (!idleMode && desiredTemperature > 0) {
+            update_actual_temperature_display();
+            float currentTemp = (read_potentiometer() / 1023.0f) * 50.0f;
+            systemState = (currentTemp > desiredTemperature) ? 1 : 0;
+
+            if (!fanActive) {
+				uint32_t requiredDuration = (systemState == 1) ? FAN_ALARM_DURATION : FAN_NORMAL_DURATION;
+				start_fan(requiredDuration);
+			}
+
+            check_fan_timer();
         }
+
+        if ((millis - lastKeyPressTime) > MENU_RESET_TIME) {
+            show_main_menu();
+            lastKeyPressTime = millis;
+        }
+
+        delayMs(100);
     }
+
+}
+
+void SysTick_Handler(void) {
+    millis++;
 }
 
 void start_fan(uint32_t duration) {
@@ -166,7 +161,7 @@ void start_fan(uint32_t duration) {
 
     PTB->PCOR = 0x40000; // Encender LED (simular ventilador)
     fanActive = 1;
-    fanStartTime = TPM0->CNT;
+    fanStartTime = millis;
 }
 
 void stop_fan(void) {
@@ -176,10 +171,9 @@ void stop_fan(void) {
 
 void check_fan_timer(void) {
     if (fanActive) {
-        uint32_t currentDuration = systemState == 1 ? FAN_ALARM_DURATION : FAN_NORMAL_DURATION;
-        if ((TPM0->CNT - fanStartTime) >= currentDuration) {
+        uint32_t duration = (systemState == 1) ? FAN_ALARM_DURATION : FAN_NORMAL_DURATION;
+        if ((millis - fanStartTime) >= duration) {
             stop_fan();
-            if (systemState == 1) systemState = 0; // Salir del modo alarma
         }
     }
 }
@@ -193,8 +187,8 @@ void process_temperature_input(char key) {
 }
 
 void update_temperature_display() {
-    LCD_command(0xC0);
-    LCD_print("Temp: ");
+    LCD_command(0x80);
+    LCD_print("Set Temp: ");
 
     if (inputPosition > 0) {
         LCD_data(temperatureInput[0] + '0');
@@ -210,14 +204,7 @@ void update_temperature_display() {
         LCD_data('0');
     }
 
-    LCD_print(" C    ");
-}
-
-void clear_line(uint8_t line) {
-    LCD_command(line == 0 ? 0x80 : 0xC0);
-    for (uint8_t i = 0; i < 16; i++) {
-        LCD_data(' ');
-    }
+    LCD_print(" C      ");
 }
 
 void show_main_menu() {
@@ -225,32 +212,7 @@ void show_main_menu() {
     delayMs(10);
 
     LCD_command(0x80);
-    LCD_print("Set temperature");
     update_temperature_display();
-}
-
-void check_temperature_comparison() {
-    float currentTemp = (read_potentiometer() / 1023.0) * 50.0;
-    float setTemp = temperatureInput[0] * 10 + temperatureInput[1];
-
-    LCD_command(0xC0);
-    LCD_print("Actual:");
-
-    // Mostrar temperatura actual (siempre 2 dígitos)
-    int tempInt = (int)(currentTemp + 0.5);
-    if(tempInt < 10) {
-        LCD_data('0');
-        LCD_data(tempInt + '0');
-    } else {
-        LCD_data((tempInt/10) + '0');
-        LCD_data((tempInt%10) + '0');
-    }
-    LCD_print(" C      ");
-
-    // Control del ventilador
-    if (currentTemp > setTemp) {
-		systemState = 1; // Entrar en modo alarma
-	}
 }
 
 void update_actual_temperature_display() {
