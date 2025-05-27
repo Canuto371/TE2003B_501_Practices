@@ -84,7 +84,7 @@ int main(void)
 					stop_fan();  // Por si acaso
 					show_main_menu();  // Mostrar menú principal
 				}
-				continue;  // Mientras esté en IDLE, ignoramos cualquier otra tecla
+				continue;  
 			}
 
             if (keyChar == '*') {
@@ -159,13 +159,13 @@ void SysTick_Handler(void) {
 void start_fan(uint32_t duration) {
     if (idleMode) return;
 
-    PTB->PCOR = 0x40000; // Encender LED (simular ventilador)
+    PTB->PCOR = 0x40000; // Encender LED
     fanActive = 1;
     fanStartTime = millis;
 }
 
 void stop_fan(void) {
-    PTB->PSOR = 0x40000; // Apagar LED (detener ventilador)
+    PTB->PSOR = 0x40000; // Apagar LED
     fanActive = 0;
 }
 
@@ -221,25 +221,22 @@ void update_actual_temperature_display() {
     #define ADC_MAX 1023 // Valor ADC a 50°C
 
     float currentTemp = ((adcValue - ADC_MIN) / (float)(ADC_MAX - ADC_MIN)) * 50.0;
-
-    // Limitar valores entre 0 y 50
+	
     if(currentTemp < 0) currentTemp = 0;
     if(currentTemp > 50) currentTemp = 50;
 
-    LCD_command(0xC0);  // Ir al inicio de la segunda línea
-    LCD_print("Actual:    ");  // Espacios para limpiar dígitos anteriores
+    LCD_command(0xC0);  
+    LCD_print("Actual:    ");  
 
-    // Mostrar temperatura con 2 dígitos siempre
-    int tempInt = (int)(currentTemp + 0.5); // Redondeo al entero más cercano
+    int tempInt = (int)(currentTemp + 0.5);
 
-    LCD_command(0xC7);  // Posicionar cursor después de "Actual:"
+    LCD_command(0xC7); 
 
-    // Mostrar siempre dos dígitos para temperaturas de 0-9
     if(tempInt < 10) {
         LCD_data('0');
         LCD_data(tempInt + '0');
     }
-    // Mostrar dos dígitos para temperaturas de 10-50
+    
     else {
         LCD_data((tempInt/10) + '0');
         LCD_data((tempInt%10) + '0');
@@ -268,9 +265,9 @@ uint16_t read_potentiometer(void) {
         ADC0->SC1[0] = 0x08;  // Channel 8
         while(!(ADC0->SC1[0] & 0x80)) {} // Wait for conversion
         sum += ADC0->R[0];
-        delayMs(1);  // Pequeño delay entre muestras
+        delayMs(1);  
     }
-    return sum;  // Retorna el valor promedio
+    return sum; 
 }
 
 void LED_init(void)
